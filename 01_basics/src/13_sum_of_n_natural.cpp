@@ -6,6 +6,7 @@ int sumOfFirstNNaturalNumbers(int n) {
     return (n * (n + 1)) / 2;
 }
 
+#ifndef TESTING
 int main(){
     int a;
 
@@ -16,3 +17,4 @@ int main(){
 
     return 0;
 }
+#endif

@@ -11,19 +11,15 @@ Notes:
 - test infers:
     tests file:  <root>/tests/test_<file>.cpp
     headers dir: <root>/headers
-  where <root> is the dir above 'src'.
-- GTest lookup order:
-    1) Prebuilt libs if visible (-lgtest -lgtest_main)
-    2) Fallback: compile vendored sources (googletest/googletest/src/gtest-all.cc)
-- Env overrides:
-    GTEST_ROOT=/path/to/googletest             (folder containing "googletest/" subdir)
-    GTEST_INCLUDE_DIR=/path/include            (if not using GTEST_ROOT)
-    GTEST_SRC=/path/to/gtest-all.cc            (if not using GTEST_ROOT)
-    GTEST_LIB_DIR=/path/to/lib                 (if you do have prebuilt libs)
+  where <root> is the directory above 'src'.
+
+- GTest auto-detect:
+    include/lib at /c/MinGW or /c/mingw64
+  Override with:
+    GTEST_INCLUDE_DIR=...  GTEST_LIB_DIR=...
 EOF
 }
 
-# Original one-file runner
 run() {
   file="${1:?missing .cpp file}"
   exe="${file%.cpp}"
@@ -32,30 +28,20 @@ run() {
   rm -f "$exe"
 }
 
-# Try to detect prebuilt libs or vendored sources
-detect_gtest_mode() {
-  # If GTEST_LIB_DIR is set, assume prebuilt
-  if [ -n "${GTEST_LIB_DIR:-}" ]; then
-    echo "prebuilt"; return 0
+detect_gtest_paths() {
+  # Env vars first
+  if [ -n "${GTEST_INCLUDE_DIR:-}" ] && [ -n "${GTEST_LIB_DIR:-}" ]; then
+    echo "$GTEST_INCLUDE_DIR|$GTEST_LIB_DIR"; return 0
   fi
 
-  # If we see libs in MinGW, assume prebuilt
-  if [ -f "/c/MinGW/lib/libgtest.a" ] || [ -f "/c/MinGW/lib/libgtest_main.a" ]; then
-    echo "prebuilt"; return 0
-  fi
+  # Common Windows MinGW locations
+  for ROOT in /c/MinGW /c/mingw64; do
+    if [ -f "$ROOT/include/gtest/gtest.h" ]; then
+      echo "$ROOT/include|$ROOT/lib"; return 0
+    fi
+  done
 
-  # If GTEST_ROOT is set or vendored folder exists, use sources
-  if [ -n "${GTEST_ROOT:-}" ] || [ -d "./googletest/googletest/src" ]; then
-    echo "sources"; return 0
-  fi
-
-  # If explicit GTEST_SRC provided
-  if [ -n "${GTEST_SRC:-}" ]; then
-    echo "sources"; return 0
-  fi
-
-  # Nothing found
-  echo "none"; return 1
+  echo "|"; return 1
 }
 
 test_only_src() {
@@ -72,67 +58,36 @@ test_only_src() {
   tests_dir="$root/tests"
   headers_dir="$root/headers"
 
-  base="$(basename "$src")"                 # e.g., 13_sum_of_n_natural.cpp
-  stem="${base%.cpp}"                       # e.g., 13_sum_of_n_natural
-  test_file="$tests_dir/test_${stem}.cpp"   # e.g., tests/test_13_sum_of_n_natural.cpp
+  base="$(basename "$src")"
+  stem="${base%.cpp}"
+  test_file="$tests_dir/test_${stem}.cpp"
   exe="test_${stem}"
 
   [ -f "$test_file" ] || { echo "Error: test file not found: $test_file"; exit 1; }
+  [ -d "$headers_dir" ] || { echo "Warning: headers dir not found: $headers_dir"; }
 
-  MODE="$(detect_gtest_mode || true)"
+  DETECTED="$(detect_gtest_paths || true)"
+  GINC="$(echo "$DETECTED" | cut -d'|' -f1)"
+  GLIB="$(echo "$DETECTED" | cut -d'|' -f2)"
 
-  CFLAGS="-std=c++17 -I\"$headers_dir\" -I\"$src_dir\""
+  CFLAGS="-std=c++17 -DTESTING -I\"$headers_dir\" -I\"$src_dir\""
+  [ -n "$GINC" ] && CFLAGS="$CFLAGS -I\"$GINC\""
+
+  # No -pthread on MinGW
   LDFLAGS=""
-  GTEST_MSG=""
-
-  if [ "$MODE" = "prebuilt" ]; then
-    # Prebuilt libs
-    GINC="${GTEST_INCLUDE_DIR:-/c/MinGW/include}"
-    GLIB="${GTEST_LIB_DIR:-/c/MinGW/lib}"
-    CFLAGS="$CFLAGS -I\"$GINC\""
-    LDFLAGS="$LDFLAGS -L\"$GLIB\" -lgtest -lgtest_main"
-    GTEST_MSG="(linking prebuilt gtest)"
-
-  elif [ "$MODE" = "sources" ]; then
-    # Compile sources directly (no cmake)
-    if [ -z "${GTEST_ROOT:-}" ]; then
-      # default to vendored ./googletest
-      GTEST_ROOT="./googletest"
-    fi
-    GINC="${GTEST_INCLUDE_DIR:-$GTEST_ROOT/googletest/include}"
-    GSRC="${GTEST_SRC:-$GTEST_ROOT/googletest/src/gtest-all.cc}"
-
-    [ -f "$GINC/gtest/gtest.h" ] || { echo "Error: gtest headers not found at $GINC"; exit 1; }
-    [ -f "$GSRC" ] || { echo "Error: gtest-all.cc not found at $GSRC"; exit 1; }
-
-    CFLAGS="$CFLAGS -I\"$GINC\""
-    # We add gtest-all.cc as a compilation unit; no libs needed
-    GTEST_SRC_ARG="\"$GSRC\""
-    GTEST_MSG="(compiling gtest sources)"
-  else
-    echo "GoogleTest not found. Either:"
-    echo "  - Install libs in C:\\MinGW (headers in include\\gtest, libs in lib), or"
-    echo "  - Vendor the sources: place 'googletest/' folder next to run.sh, or"
-    echo "  - Set GTEST_ROOT to your googletest checkout."
-    exit 1
-  fi
+  [ -n "$GLIB" ] && LDFLAGS="$LDFLAGS -L\"$GLIB\""
+  LDFLAGS="$LDFLAGS -lgtest -lgtest_main"
 
   echo "Compiling:"
-  echo "  src:       $src"
-  echo "  test:      $test_file"
-  echo "  headers:   $headers_dir"
-  echo "  gtest mode $GTEST_MSG"
-  [ "${GINC:-}" ] && echo "  gtest inc: $GINC"
-  [ "${GLIB:-}" ] && echo "  gtest lib: $GLIB"
+  echo "  src:     $src"
+  echo "  test:    $test_file"
+  echo "  headers: $headers_dir"
+  [ -n "$GINC" ] && echo "  gtest include: $GINC"
+  [ -n "$GLIB" ] && echo "  gtest lib:     $GLIB"
   echo
 
-  if [ "$MODE" = "sources" ]; then
-    # shellcheck disable=SC2086
-    eval g++ $CFLAGS \"$src\" \"$test_file\" $GTEST_SRC_ARG -o \"$exe\"
-  else
-    # shellcheck disable=SC2086
-    eval g++ $CFLAGS \"$src\" \"$test_file\" $LDFLAGS -o \"$exe\"
-  fi
+  # shellcheck disable=SC2086
+  eval g++ $CFLAGS \"$src\" \"$test_file\" $LDFLAGS -o \"$exe\"
 
   "./$exe"
   status=$?
