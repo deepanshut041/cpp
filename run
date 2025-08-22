@@ -1,0 +1,4 @@
+#!/bin/sh
+file=$1
+exe="${file%.cpp}"
+g++ "$file" -o "$exe" && "$exe" && rm "$exe"
