@@ -29,3 +29,5 @@ TAGS
 *.bak
 *.orig
 *.rej
+
+googletest/
