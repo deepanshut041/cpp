@@ -11,6 +11,13 @@ void printScores(const array<int, 5> &scores, string name){
     cout << endl;
 }
 
+void printScores2(const array<int, 5> &scores, string name){
+    cout << name << ": ";
+    for (int i{0}; i < scores.size(); i++)  // iterates by const reference
+        cout << scores[i] << ", ";
+    cout << endl;
+}
+
 int main(){
 
     array<int, 5> intArr;
@@ -19,6 +26,7 @@ int main(){
     int intArr2[5] = {2, 3, 4, 5, 3};
 
     printScores(intArr, "Int Arr");
+    printScores2(intArr, "Int Arr");
 
     try{
         cout << intArr.at(5) << endl;
