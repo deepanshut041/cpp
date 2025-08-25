@@ -14,7 +14,7 @@ int main(){
     tie(i1, d1) = ReturnTuple();
     cout << "i: " << i1 << " | d: " << d1 << endl;
 
-    std::tie(i2, std::ignore) = ReturnTuple();
+    tie(i2, ignore) = ReturnTuple();
     cout << "i: " << i2 << endl;
 
     // Need cpp 17
