@@ -4,8 +4,8 @@ set -eu
 usage() {
   cat <<EOF
 Usage:
-  $0 run <file.cpp>
-  $0 test <path/to/.../src/file.cpp>
+  $0 run <file.cpp|file.cu>
+  $0 test <path/to/.../src/file.cpp|file.cu>
 
 Notes:
 - test infers:
@@ -17,35 +17,75 @@ Notes:
     include/lib at /c/MinGW or /c/mingw64
   Override with:
     GTEST_INCLUDE_DIR=...  GTEST_LIB_DIR=...
+
+- CUDA auto-detect (for .cu):
+    tries common Windows CUDA Toolkit paths
+  Override with:
+    CUDA_INCLUDE_DIR=...  CUDA_LIB_DIR=...
 EOF
 }
 
-run() {
-  file="${1:?missing .cpp file}"
-  exe="${file%.cpp}"
-  g++ "$file" -o "$exe"
-  "./$exe"
-  rm -f "$exe"
+compiler_for() {
+  case "$1" in
+    *.cu) echo "nvcc" ;;
+    *.cpp) echo "g++" ;;
+    *) echo "g++" ;;
+  esac
 }
 
 detect_gtest_paths() {
-  # Env vars first
   if [ -n "${GTEST_INCLUDE_DIR:-}" ] && [ -n "${GTEST_LIB_DIR:-}" ]; then
     echo "$GTEST_INCLUDE_DIR|$GTEST_LIB_DIR"; return 0
   fi
-
-  # Common Windows MinGW locations
   for ROOT in /c/MinGW /c/mingw64; do
     if [ -f "$ROOT/include/gtest/gtest.h" ]; then
       echo "$ROOT/include|$ROOT/lib"; return 0
+    fi
+  done
+  echo "|"; return 1
+}
+
+detect_cuda_paths() {
+  if [ -n "${CUDA_INCLUDE_DIR:-}" ] && [ -n "${CUDA_LIB_DIR:-}" ]; then
+    echo "$CUDA_INCLUDE_DIR|$CUDA_LIB_DIR"; return 0
+  fi
+
+  for VER in 12.6 12.5 12.4 12.3 12.2 12.1 12.0 11.8 11.7 11.6 11.5 11.4 11.3 11.2 11.1 11.0 10.2 10.1 10.0; do
+    ROOT="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v$VER"
+    if [ -d "$ROOT/include" ] && [ -d "$ROOT/lib/x64" ]; then
+      echo "$ROOT/include|$ROOT/lib/x64"; return 0
     fi
   done
 
   echo "|"; return 1
 }
 
+run() {
+  file="${1:?missing .cpp/.cu file}"
+  exe="${file%.*}"
+  comp="$(compiler_for "$file")"
+
+  if [ "$comp" = "nvcc" ]; then
+    DETECTED="$(detect_cuda_paths || true)"
+    CINC="$(echo "$DETECTED" | cut -d'|' -f1)"
+    CLIB="$(echo "$DETECTED" | cut -d'|' -f2)"
+    CFLAGS="-std=c++17"
+    [ -n "$CINC" ] && CFLAGS="$CFLAGS -I\"$CINC\""
+    LDFLAGS=""
+    [ -n "$CLIB" ] && LDFLAGS="$LDFLAGS -L\"$CLIB\""
+    LDFLAGS="$LDFLAGS -lcudart"
+    # shellcheck disable=SC2086
+    eval nvcc $CFLAGS \"$file\" $LDFLAGS -o \"$exe\"
+  else
+    g++ "$file" -o "$exe"
+  fi
+
+  "./$exe"
+  rm -f "$exe"
+}
+
 test_only_src() {
-  src="${1:?missing src .cpp path}"
+  src="${1:?missing src .cpp/.cu path}"
   [ -f "$src" ] || { echo "Error: '$src' not found"; exit 1; }
 
   src_dir=$(dirname "$src")
@@ -59,35 +99,61 @@ test_only_src() {
   headers_dir="$root/headers"
 
   base="$(basename "$src")"
-  stem="${base%.cpp}"
+  stem="${base%.*}"
   test_file="$tests_dir/test_${stem}.cpp"
   exe="test_${stem}"
 
   [ -f "$test_file" ] || { echo "Error: test file not found: $test_file"; exit 1; }
   [ -d "$headers_dir" ] || { echo "Warning: headers dir not found: $headers_dir"; }
 
-  DETECTED="$(detect_gtest_paths || true)"
-  GINC="$(echo "$DETECTED" | cut -d'|' -f1)"
-  GLIB="$(echo "$DETECTED" | cut -d'|' -f2)"
+  DETECTED_G="$(detect_gtest_paths || true)"
+  GINC="$(echo "$DETECTED_G" | cut -d'|' -f1)"
+  GLIB="$(echo "$DETECTED_G" | cut -d'|' -f2)"
 
-  CFLAGS="-std=c++17 -DTESTING -I\"$headers_dir\" -I\"$src_dir\""
-  [ -n "$GINC" ] && CFLAGS="$CFLAGS -I\"$GINC\""
+  comp="$(compiler_for "$src")"
 
-  # No -pthread on MinGW
-  LDFLAGS=""
-  [ -n "$GLIB" ] && LDFLAGS="$LDFLAGS -L\"$GLIB\""
-  LDFLAGS="$LDFLAGS -lgtest -lgtest_main"
+  if [ "$comp" = "nvcc" ]; then
+    DETECTED_C="$(detect_cuda_paths || true)"
+    CINC="$(echo "$DETECTED_C" | cut -d'|' -f1)"
+    CLIB="$(echo "$DETECTED_C" | cut -d'|' -f2)"
+    CFLAGS="-std=c++17 -DTESTING -I\"$headers_dir\" -I\"$src_dir\""
+    [ -n "$GINC" ] && CFLAGS="$CFLAGS -I\"$GINC\""
+    [ -n "$CINC" ] && CFLAGS="$CFLAGS -I\"$CINC\""
+    LDFLAGS=""
+    [ -n "$GLIB" ] && LDFLAGS="$LDFLAGS -L\"$GLIB\""
+    [ -n "$CLIB" ] && LDFLAGS="$LDFLAGS -L\"$CLIB\""
+    LDFLAGS="$LDFLAGS -lgtest -lgtest_main -lcudart"
 
-  echo "Compiling:"
-  echo "  src:     $src"
-  echo "  test:    $test_file"
-  echo "  headers: $headers_dir"
-  [ -n "$GINC" ] && echo "  gtest include: $GINC"
-  [ -n "$GLIB" ] && echo "  gtest lib:     $GLIB"
-  echo
+    echo "Compiling:"
+    echo "  src:     $src"
+    echo "  test:    $test_file"
+    echo "  headers: $headers_dir"
+    [ -n "$GINC" ] && echo "  gtest include: $GINC"
+    [ -n "$GLIB" ] && echo "  gtest lib:     $GLIB"
+    [ -n "$CINC" ] && echo "  cuda include:  $CINC"
+    [ -n "$CLIB" ] && echo "  cuda lib:      $CLIB"
+    echo
 
-  # shellcheck disable=SC2086
-  eval g++ $CFLAGS \"$src\" \"$test_file\" $LDFLAGS -o \"$exe\"
+    # shellcheck disable=SC2086
+    eval nvcc $CFLAGS \"$src\" \"$test_file\" $LDFLAGS -o \"$exe\"
+  else
+    CFLAGS="-std=c++17 -DTESTING -I\"$headers_dir\" -I\"$src_dir\""
+    [ -n "$GINC" ] && CFLAGS="$CFLAGS -I\"$GINC\""
+    LDFLAGS=""
+    [ -n "$GLIB" ] && LDFLAGS="$LDFLAGS -L\"$GLIB\""
+    LDFLAGS="$LDFLAGS -lgtest -lgtest_main"
+
+    echo "Compiling:"
+    echo "  src:     $src"
+    echo "  test:    $test_file"
+    echo "  headers: $headers_dir"
+    [ -n "$GINC" ] && echo "  gtest include: $GINC"
+    [ -n "$GLIB" ] && echo "  gtest lib:     $GLIB"
+    echo
+
+    # shellcheck disable=SC2086
+    eval g++ $CFLAGS \"$src\" \"$test_file\" $LDFLAGS -o \"$exe\"
+  fi
 
   "./$exe"
   status=$?
