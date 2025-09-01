@@ -31,3 +31,4 @@ TAGS
 *.rej
 
 googletest/
+build/
