@@ -6,22 +6,6 @@
 
 using namespace std;
 
-// __global__ void mulKernel(int *A, int *B, int *C, int m, int n, int k){
-//     auto c = threadIdx.x + blockDim.x * blockIdx.x;
-//     auto r = threadIdx.y + blockDim.y * blockIdx.y;
-
-//     if (r < m && c < k)
-//     {
-//         int t = 0;
-//         for (int p = 0; p < n; p++)
-//         {
-//             t += A[r * n + p] * B[p * k + c];
-//         }
-        
-//         C[r * k + c] = t;
-//     }
-    
-// }
 
 __global__ void mulKernel(int *A, int *B, int *C, int M, int N, int K){
     auto r = threadIdx.y + blockDim.y * blockIdx.y;
