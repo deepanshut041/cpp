@@ -16,7 +16,7 @@ struct Storage {
             data = shared_ptr<float>(nullptr, [](float*) {});
             return;
         }
-        data = shared_ptr<float>(new float[size], [](float* p) { delete[] p; });
+        data = shared_ptr<float>(new float[size], [](const float* p) { delete[] p; });
         if (d) memcpy(data.get(), d, static_cast<size_t>(size) * sizeof(float));
         else memset(data.get(), 0, static_cast<size_t>(size) * sizeof(float));
     }
@@ -85,17 +85,17 @@ struct TrackedTensor {
         storage_->write(i, v);
     }
 
-    int version() const {
+    [[nodiscard]] int version() const {
         if (!storage_) return 0;
         return storage_->version;
     }
 
-    int64_t size() const {
+    [[nodiscard]] int64_t size() const {
         if (!storage_) return 0;
         return storage_->size;
     }
 
-    const void* storage_ptr() const {
+    [[nodiscard]] void* storage_ptr() const {
         return storage_.get();
     }
 };
